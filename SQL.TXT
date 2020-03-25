@@ -1,0 +1,176 @@
+--1. Sa se afiseze informatii despre primii 5 cei mai batrani doctori. 	
+SELECT * 
+FROM (  SELECT *
+        FROM doctor
+        ORDER BY datanasterii)
+WHERE ROWNUM<=5;
+
+--2 Sa se afiseze salariul mediu al tututor angajatilor fiecarei sectii din baza de date in ordine descrescatoare.
+SELECT c.codsectie, round(d.Avg) AS mediedoctor,round(a.Avg) AS medieasistente,round(s.Avg) AS mediepersonal,
+        CASE
+        WHEN COALESCE(round(d.Avg), round(a.Avg), round(s.Avg)) IS NOT NULL THEN 
+        round(( COALESCE(round(d.Avg), 0) + COALESCE(round(s.Avg), 0) + COALESCE(round(a.Avg), 0) ) / 
+            (CASE WHEN round(d.Avg) IS NULL THEN 0 ELSE 1 END + 
+             CASE WHEN round(a.Avg) IS NULL THEN 0 ELSE 1 END + 
+             CASE WHEN round(s.Avg) IS NULL THEN 0 ELSE 1 END))
+        END AS MedieSectie
+FROM  sectie c LEFT JOIN
+      (SELECT d.codsectie, AVG(d.salariu) AS Avg
+       FROM doctor d
+       GROUP BY d.codsectie
+      ) d 
+      ON c.codsectie = d.codsectie LEFT JOIN
+      (SELECT a.codsectie, AVG(a.salariu) AS Avg
+       FROM personalmedicalasistente a
+       GROUP BY a.codsectie
+      ) a 
+      ON c.codsectie = a.codsectie LEFT JOIN
+      (SELECT s.codsectie, AVG(s.salariu) AS Avg
+       FROM personalspital s
+       GROUP BY s.codsectie
+      ) s
+      ON c.codsectie = s.codsectie
+ORDER BY mediesectie DESC;
+
+
+--3 Sa se afiseze adresa spitalului, numele sectiei si cladirea in care a avut loc operatia cu PK CODPACIENT=5016,CODINCAPERE=2641 SI CODDOCTOR=4039
+SELECT s.nume,s.strada,s.numar,s.codoras,c.nume cladire,dep.nume sectie
+FROM operatie o INNER JOIN salaoperatie so ON o.codincapere=so.codincapere 
+                INNER JOIN sectie dep ON dep.codsectie=so.codsectie
+                INNER JOIN spital s ON s.codspital=dep.codspital
+                INNER JOIN cladire c ON c.codspital=s.codspital
+WHERE o.codpacient=5016 AND o.codincapere=2641 AND o.coddoctor=4039;
+
+
+--4 Sa se afiseze medicamentele prescrise si doza administrata pentru diagnosticul 'arsuri'.
+SELECT DISTINCT m.codmedicament,m.nume,mr.cantitate
+FROM medicament m LEFT JOIN reteta_x_medicament mr ON m.codmedicament=mr.codmedicament
+                  LEFT JOIN reteta r ON mr.codreteta=r.codreteta
+                  LEFT JOIN consultatie c ON r.codconsultatie=c.codconsultatie
+                  LEFT JOIN diagnostic d ON d.coddiagnostic=c.coddiagnostic
+WHERE d.nume=LOWER('arsuri');
+
+
+--5 Sa se afiseze toti pacientii care au varsta mai mare de 30 de ani care sunt barbati.
+SELECT nume,prenume,cnp,TO_DATE(SUBSTR(TO_CHAR(CNP),2,6),'YY-MM-DD') DATANASTERII
+FROM pacient  
+WHERE (cnp LIKE('1%') OR cnp LIKE('3%') OR cnp LIKE('5%') OR cnp LIKE('7%') OR cnp LIKE('9%'))
+       AND EXTRACT(YEAR FROM TO_DATE(SYSDATE, 'DD-MON-RR'))- EXTRACT(YEAR FROM
+       TO_DATE(TO_DATE(SUBSTR(TO_CHAR(cnp),2,6),'YY-MM-DD'), 'DD-MON-RR'))>30;
+
+--6 Sa se afiseze pacientii,ziua in care au fost consultati si datele despre medic, doar daca acesta este manager al unui spital.
+SELECT p.nume,p.prenume,fm.codfisamedicala,c.data,d.nume doctor_nume,d.prenume doctor_prenume
+FROM pacient p LEFT JOIN fisamedicala fm ON p.codpacient=fm.codpacient
+               LEFT JOIN consultatie c ON c.codfisamedicala=fm.codfisamedicala
+               LEFT JOIN doctor d ON d.codangajat=c.coddoctor
+WHERE d.codangajat IN (SELECT CODMANAGER 
+                       FROM SPITAL);
+
+
+--7 Sa se afiseze numele spitalului, loca?ia, num?rul de angaja?i din acel spital. 
+CREATE OR REPLACE VIEW sectie_x_angajati AS
+SELECT c.codsectie,(nvl(d.Avg,0)+nvl(s.Avg,0)+nvl(a.Avg,0))as nrangajati
+FROM  sectie c LEFT JOIN
+      (SELECT d.codsectie, count(d.codangajat) AS Avg
+       FROM doctor d
+       GROUP BY d.codsectie
+      ) d
+      ON c.codsectie = d.codsectie LEFT JOIN
+      (SELECT a.codsectie, count(a.codangajat) AS Avg
+       FROM personalmedicalasistente a
+       GROUP BY a.codsectie
+      ) a
+      ON c.codsectie = a.codsectie LEFT JOIN
+      (SELECT s.codsectie, count(s.codangajat) AS Avg
+       FROM personalspital s
+       GROUP BY s.codsectie
+      ) s
+      ON c.codsectie = s.codsectie
+ORDER BY nrangajati DESC;
+ALTER VIEW sectie_x_angajati
+ADD CONSTRAINT sectie_angajati_fk FOREIGN KEY(Codsectie) REFERENCES sectie(Codsectie)DISABLE NOVALIDATE;
+
+SELECT s.codspital,s.nume,s.strada||'-'||s.numar||'-'||o.nume||'-'||t.nume adresa, SUM(sa.nrangajati)nrangajati
+FROM sectie_x_angajati sa JOIN sectie se ON sa.codsectie=se.codsectie
+                          JOIN spital s ON s.codspital=se.codspital
+                          JOIN oras o ON s.codoras=o.codoras 
+                          JOIN tara t ON o.codtara=t.codtara
+GROUP BY s.codspital,s.nume,s.nume,s.strada||'-'||s.numar||'-'||o.nume||'-'||t.nume;
+
+
+--8 Sa se afiseze codul si numele pacientilor care au cel putin 2 consultatii
+SELECT p.codpacient,p.nume,p.prenume,COUNT(c.codconsultatie) AS nr
+FROM pacient p JOIN fisamedicala fm ON fm.codpacient=p.codpacient
+               JOIN consultatie c ON c.codfisamedicala=fm.codfisamedicala
+GROUP BY p.codpacient,p.nume,p.prenume
+HAVING COUNT(c.codconsultatie) >=2
+ORDER BY  4 DESC;
+
+
+--9 Sa se afiseze toti pacientii internati intre 20 Februarie 2007 ?i 1 Mai 2015 si salonul in care au fost cazati
+SELECT p.codpacient,p.nume,p.prenume,s.codincapere,s.nume,ps.datainternare,ps.dataexternare
+FROM pacient p LEFT JOIN pacient_x_salon ps ON p.codpacient=ps.codpacient
+               LEFT JOIN salon s ON ps.codsalon=s.codincapere
+WHERE ps.datainternare BETWEEN '20-FEB-07' AND '01-MAY-15'
+ORDER BY p.codpacient;
+
+
+--10 Sa se afiseze date despre cel mai bine si cel mai prost platit doctor;
+DECLARE
+    v_max doctor%ROWTYPE;
+    v_min doctor%ROWTYPE;
+    BEGIN
+        SELECT * INTO v_max FROM doctor WHERE salariu=(SELECT MAX(salariu) FROM doctor);
+        SELECT * INTO v_min FROM doctor WHERE salariu=(SELECT MIN(Salariu) FROM doctor);
+        dbms_output.put_line('Angajatul '||v_max.prenume||' '||v_max.nume||' are salariu maxim care este egal cu: '||v_max.salariu||' si lucreaza in sectia '||v_max.codsectie||' Cabinetul in care poate fi gasit este '||v_max.codcabinet);           
+        dbms_output.put_line('Angajatul '||v_min.prenume||' '||v_min.nume||' are salariu minim care este egal cu: '||v_min.salariu||' si lucreaza in sectia '||v_min.codsectie||' Cabinetul in care poate fi gasit este '||v_min.codcabinet);
+    END;
+    
+    
+    
+--11 Sa se afiseze datele despre doctorii care au tratat pacientii a caror internare a durat mai mult de o o zi.
+SELECT d.nume,d.prenume,d.codsectie,d.specializare,p.nume,p.prenume,NULLIF(fm.datainternare,fm.dataexternare)
+FROM pacient p JOIN fisamedicala fm ON fm.codpacient=p.codpacient
+               JOIN consultatie c ON c.codfisamedicala=fm.codfisamedicala
+               JOIN doctor d ON d.codangajat=c.coddoctor
+WHERE NULLIF(fm.datainternare,fm.dataexternare) IS NOT NULL;
+
+
+
+--12 Sa se afiseze doctorii care la inceputul lunii viitoare vor fi inca la locul de munca(data finala reprezinta retragerea din cariera).
+SELECT codangajat,nume,prenume,specializare,dataangajarii,datafinala
+FROM doctor
+WHERE TRUNC(ADD_MONTHS(sysdate,1), 'month')<datafinala;
+  
+  
+--13 Sa se afiseze orasul fiecarui spital folosint functia decode.
+SELECT spital.nume,
+DECODE(spital.codspital, 513, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=513),
+                         514, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=514),
+                         515, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=515),
+                         516, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=516),
+                         517, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=517),
+                         518, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=518),
+                         519, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=519),
+                         520, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=520),
+                         521, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=521),
+                         522, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=522),
+                         523, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=523),
+                         524, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=524),
+                         525, (SELECT oras.nume FROM oras JOIN spital ON oras.codoras=spital.codoras WHERE spital.codspital=525)) oras
+FROM spital;
+
+
+
+--14 In urma unor campanii de ajutor realizate de catre spitale, fiecare asistent medical doneaza 5% din salariu.Daca banii stransi se impart spitalelor in mod egal, cat primeste fiecare spital si cat bani raman?
+SELECT SUM(p.salariu*0.05) suma,COUNT(spital.codspital),SUM(p.salariu*0.05)/COUNT(spital.codspital) AS suma_primita,MOD(SUM(p.salariu*0.05),COUNT(spital.codspital)) bani_ramasi
+FROM personalmedicalasistente p,spital;
+
+--15 Sa se afiseze codul postal al orasului in care au fost tratati pacientii in luna octombrie  a anului 2010.
+SELECT o.codpostal,O.NUME,SPT.NUME,P.NUME PACIENT
+FROM pacient p JOIN pacient_x_salon ps ON P.codpacient=ps.codpacient
+               JOIN salon s ON ps.codsalon=s.codincapere
+               JOIN sectie se ON s.codsectie=se.codsectie
+               JOIN spital spt ON se.codspital=spt.codspital
+               JOIN oras o ON o.codoras=spt.codoras
+WHERE EXTRACT(MONTH FROM ps.datainternare)=10 AND EXTRACT(YEAR FROM ps.datainternare)=2010 ;
